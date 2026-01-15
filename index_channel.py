@@ -1,15 +1,13 @@
 from telethon import TelegramClient
+from telethon.tl.functions.messages import GetHistoryRequest
 import sqlite3
 import asyncio
+import os
 
-# ====== بياناتك ======
-API_ID = 35154140
-API_HASH = "017e4aff6a90364fac02b097250e5dff"
-CHANNEL_USERNAME = "meknaz_alalbany"
-BATCH_LIMIT = 3000   # كل دفعة
-SLEEP_TIME = 1
+API_ID = int(os.environ["API_ID"])
+API_HASH = os.environ["API_HASH"]
+CHANNEL_USERNAME = "meknaz_alalbany"  # بدون @
 
-# ====== قاعدة البيانات ======
 conn = sqlite3.connect("content.db")
 cursor = conn.cursor()
 
@@ -17,71 +15,52 @@ cursor.execute("""
 CREATE TABLE IF NOT EXISTS content (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     text TEXT,
-    link TEXT UNIQUE
-)
-""")
-
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS meta (
-    key TEXT PRIMARY KEY,
-    value TEXT
+    link TEXT
 )
 """)
 conn.commit()
 
-def get_last_id():
-    cursor.execute("SELECT value FROM meta WHERE key='last_id'")
-    row = cursor.fetchone()
-    return int(row[0]) if row else 0
-
-def save_last_id(mid):
-    cursor.execute(
-        "INSERT OR REPLACE INTO meta (key, value) VALUES ('last_id', ?)",
-        (str(mid),)
-    )
-    conn.commit()
-
-# ====== Telethon ======
 client = TelegramClient("session", API_ID, API_HASH)
 
 async def main():
     await client.start()
     channel = await client.get_entity(CHANNEL_USERNAME)
 
-    last_id = get_last_id()
+    offset_id = 0
     count = 0
 
-    async for message in client.iter_messages(
-        channel,
-        min_id=last_id,
-        reverse=True
-    ):
-        if not (message.text or message.message):
-            continue
+    while True:
+        history = await client(GetHistoryRequest(
+            peer=channel,
+            offset_id=offset_id,
+            offset_date=None,
+            add_offset=0,
+            limit=100,
+            max_id=0,
+            min_id=0,
+            hash=0
+        ))
 
-        text = message.text or message.message
-        link = f"https://t.me/{CHANNEL_USERNAME}/{message.id}"
+        if not history.messages:
+            break
 
-        try:
-            cursor.execute(
-                "INSERT OR IGNORE INTO content (text, link) VALUES (?, ?)",
-                (text, link)
-            )
-            conn.commit()
-            save_last_id(message.id)
+        for message in history.messages:
+            text = message.text or message.message
+            if text:
+                link = f"https://t.me/{CHANNEL_USERNAME}/{message.id}"
+                cursor.execute(
+                    "INSERT INTO content (text, link) VALUES (?, ?)",
+                    (text, link)
+                )
+                count += 1
+                print(f"Indexed {count}: {link}")
 
-            count += 1
-            print(f"Indexed {count}: {link}")
+            offset_id = message.id
 
-            if count >= BATCH_LIMIT:
-                break
+        conn.commit()
+        await asyncio.sleep(1)
 
-        except Exception as e:
-            print("Error:", e)
-
-        await asyncio.sleep(SLEEP_TIME)
-
-    print("✅ Finished indexing batch")
+    print("✅ Finished indexing")
     await client.disconnect()
 
 asyncio.run(main())
