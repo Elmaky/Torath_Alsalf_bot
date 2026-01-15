@@ -1,13 +1,17 @@
-from telethon import TelegramClient
-from telethon.tl.functions.messages import GetHistoryRequest
+import os
 import sqlite3
 import asyncio
-import os
+from telethon import TelegramClient
+from telethon.tl.functions.messages import GetHistoryRequest
 
+# ========= المتغيرات من Railway =========
 API_ID = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
-CHANNEL_USERNAME = "meknaz_alalbany"  # بدون @
 
+CHANNEL_USERNAME = "meknaz_alalbany"  # بدون @
+LIMIT = 100000  # عدل الرقم حسب رغبتك
+
+# ========= قاعدة البيانات =========
 conn = sqlite3.connect("content.db")
 cursor = conn.cursor()
 
@@ -20,10 +24,13 @@ CREATE TABLE IF NOT EXISTS content (
 """)
 conn.commit()
 
+# ========= Telethon =========
 client = TelegramClient("session", API_ID, API_HASH)
 
 async def main():
-    await client.start()
+    # ⚠️ مهم: connect وليس start
+    await client.connect()
+
     channel = await client.get_entity(CHANNEL_USERNAME)
 
     offset_id = 0
@@ -45,20 +52,28 @@ async def main():
             break
 
         for message in history.messages:
-            text = message.text or message.message
-            if text:
-                link = f"https://t.me/{CHANNEL_USERNAME}/{message.id}"
-                cursor.execute(
-                    "INSERT INTO content (text, link) VALUES (?, ?)",
-                    (text, link)
-                )
-                count += 1
-                print(f"Indexed {count}: {link}")
-
             offset_id = message.id
+
+            if not message.text:
+                continue
+
+            link = f"https://t.me/{CHANNEL_USERNAME}/{message.id}"
+            cursor.execute(
+                "INSERT INTO content (text, link) VALUES (?, ?)",
+                (message.text, link)
+            )
+
+            count += 1
+            print(f"Indexed {count}: {link}")
+
+            if count >= LIMIT:
+                break
 
         conn.commit()
         await asyncio.sleep(1)
+
+        if count >= LIMIT:
+            break
 
     print("✅ Finished indexing")
     await client.disconnect()
