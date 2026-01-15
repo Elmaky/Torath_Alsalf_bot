@@ -1,94 +1,35 @@
+import os
 import sqlite3
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import CommandStart
-from aiogram.types import Message
-import asyncio
+from telegram import Update
+from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
 
-API_TOKEN = "8500985562:AAFORdXvn9vP6I5J1G2TApsZ3Qh7JYELraI"
+BOT_TOKEN = os.environ["BOT_TOKEN"]
 
-bot = Bot(token=API_TOKEN)
-dp = Dispatcher()
+conn = sqlite3.connect("content.db", check_same_thread=False)
+cursor = conn.cursor()
 
-# ===== قاعدة البيانات =====
-import re
+async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.message.text.strip()
 
-def normalize(text: str):
-    text = text.lower()
-    text = re.sub(r"[ًٌٍَُِّْ]", "", text)  # إزالة التشكيل
-    text = text.replace("ة", "ه")
-    text = re.sub(r"\bال", "", text)        # إزالة (ال)
-    return text
-
-FIQH_SYNONYMS = {
-    "قصر": ["قصر", "مسافر", "سفر", "جمع"],
-    "صلاة": ["صلاة", "يصلي", "الصلاه"],
-    "صيام": ["صيام", "صائم", "صوم", "رمضان"],
-    "اكل": ["اكل", "أكل", "فطر"],
-    "نسي": ["نسي", "ناسيا", "ناسياً", "نسيان"],
-    "حج": ["حج", "الحج", "الحجاج", "مناسك"],
-}
-
-def extract_keywords(query: str):
-    words = normalize(query).split()
-    expanded = set(words)
-
-    for w in words:
-        for key, values in FIQH_SYNONYMS.items():
-            if w in values:
-                expanded.update(values)
-
-    return list(expanded)
-
-def search_db(query: str):
-    conn = sqlite3.connect("content.db")
-    cursor = conn.cursor()
-
-    keywords = extract_keywords(query)
-    conditions = []
-    params = []
-
-    for k in keywords:
-        conditions.append("text LIKE ?")
-        params.append(f"%{k}%")
-
-    sql = "SELECT text, link FROM content WHERE " + " OR ".join(conditions) + " LIMIT 5"
-
-    cursor.execute(sql, params)
-    results = cursor.fetchall()
-    conn.close()
-    return results
-
-
-# ===== /start =====
-@dp.message(CommandStart())
-async def start(message: Message):
-    await message.answer(
-        "🔍 أهلاً بك\n\n"
-        "اكتب أي كلمة للبحث داخل مقاطع القناة.\n"
-        "مثال:\n"
-        "حج\n"
-        "صلاة\n"
-        "توحيد"
+    cursor.execute(
+        "SELECT link FROM content WHERE text LIKE ? LIMIT 5",
+        (f"%{query}%",)
     )
 
-# ===== البحث =====
-@dp.message()
-async def search(message: Message):
-    keyword = message.text.strip()
-    results = search_db(keyword)
+    results = cursor.fetchall()
 
     if not results:
-        await message.answer("❌ لا توجد نتائج")
+        await update.message.reply_text("❌ لا توجد نتائج")
         return
 
     reply = "🔎 نتائج البحث:\n\n"
-    for i, (_, link) in enumerate(results, 1):
-        reply += f"{i}- {link}\n"
+    for r in results:
+        reply += f"• {r[0]}\n"
 
-    await message.answer(reply)
+    await update.message.reply_text(reply)
 
-async def main():
-    await dp.start_polling(bot)
+app = ApplicationBuilder().token(BOT_TOKEN).build()
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search))
 
-if __name__ == "__main__":
-    asyncio.run(main())
+print("🤖 Bot is running...")
+app.run_polling()
