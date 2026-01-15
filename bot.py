@@ -1,35 +1,41 @@
 import os
 import sqlite3
-from telegram import Update
-from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
+from aiogram import Bot, Dispatcher, types
+from aiogram.utils import executor
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 
-conn = sqlite3.connect("content.db", check_same_thread=False)
-cursor = conn.cursor()
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher(bot)
 
-async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.message.text.strip()
+@dp.message_handler()
+async def search_handler(message: types.Message):
+    query = message.text.strip()
 
-    cursor.execute(
-        "SELECT link FROM content WHERE text LIKE ? LIMIT 5",
-        (f"%{query}%",)
-    )
-
-    results = cursor.fetchall()
-
-    if not results:
-        await update.message.reply_text("❌ لا توجد نتائج")
+    if len(query) < 2:
+        await message.reply("❌ اكتب كلمة أو جملة للبحث")
         return
 
-    reply = "🔎 نتائج البحث:\n\n"
-    for r in results:
-        reply += f"• {r[0]}\n"
+    conn = sqlite3.connect("content.db")
+    cursor = conn.cursor()
 
-    await update.message.reply_text(reply)
+    cursor.execute(
+        "SELECT text, link FROM content WHERE text LIKE ? LIMIT 10",
+        (f"%{query}%",)
+    )
+    results = cursor.fetchall()
+    conn.close()
 
-app = ApplicationBuilder().token(BOT_TOKEN).build()
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search))
+    if not results:
+        await message.reply("❌ لا توجد نتائج")
+        return
 
-print("🤖 Bot is running...")
-app.run_polling()
+    reply = "🔍 **نتائج البحث:**\n\n"
+    for i, (text, link) in enumerate(results, 1):
+        short = text[:100].replace("\n", " ")
+        reply += f"{i}- {short}...\n🔗 {link}\n\n"
+
+    await message.reply(reply, disable_web_page_preview=True)
+
+if __name__ == "__main__":
+    executor.start_polling(dp, skip_updates=True)

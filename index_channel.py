@@ -1,17 +1,14 @@
 import os
-import sqlite3
 import asyncio
+import sqlite3
 from telethon import TelegramClient
-from telethon.tl.functions.messages import GetHistoryRequest
 
-# ========= المتغيرات من Railway =========
+# ====== Environment Variables (Railway) ======
 API_ID = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
+CHANNEL_USERNAME = os.environ.get("CHANNEL_USERNAME", "meknaz_alalbany")
 
-CHANNEL_USERNAME = "meknaz_alalbany"  # بدون @
-LIMIT = 100000  # عدل الرقم حسب رغبتك
-
-# ========= قاعدة البيانات =========
+# ====== Database ======
 conn = sqlite3.connect("content.db")
 cursor = conn.cursor()
 
@@ -24,58 +21,46 @@ CREATE TABLE IF NOT EXISTS content (
 """)
 conn.commit()
 
-# ========= Telethon =========
+# ====== Telegram Client ======
 client = TelegramClient("session", API_ID, API_HASH)
 
 async def main():
-    # ⚠️ مهم: connect وليس start
-    await client.connect()
+    await client.start()
 
     channel = await client.get_entity(CHANNEL_USERNAME)
 
     offset_id = 0
-    count = 0
+    total = 0
+    BATCH = 100
 
     while True:
-        history = await client(GetHistoryRequest(
-            peer=channel,
-            offset_id=offset_id,
-            offset_date=None,
-            add_offset=0,
-            limit=100,
-            max_id=0,
-            min_id=0,
-            hash=0
-        ))
+        messages = await client.get_messages(
+            channel,
+            limit=BATCH,
+            offset_id=offset_id
+        )
 
-        if not history.messages:
+        if not messages:
             break
 
-        for message in history.messages:
-            offset_id = message.id
+        for msg in messages:
+            offset_id = msg.id
 
-            if not message.text:
-                continue
+            if msg.text:
+                link = f"https://t.me/{CHANNEL_USERNAME}/{msg.id}"
+                cursor.execute(
+                    "INSERT INTO content (text, link) VALUES (?, ?)",
+                    (msg.text, link)
+                )
+                total += 1
 
-            link = f"https://t.me/{CHANNEL_USERNAME}/{message.id}"
-            cursor.execute(
-                "INSERT INTO content (text, link) VALUES (?, ?)",
-                (message.text, link)
-            )
-
-            count += 1
-            print(f"Indexed {count}: {link}")
-
-            if count >= LIMIT:
-                break
+                if total % 100 == 0:
+                    print(f"Indexed {total}")
 
         conn.commit()
         await asyncio.sleep(1)
 
-        if count >= LIMIT:
-            break
-
-    print("✅ Finished indexing")
+    print("✅ FULL INDEXING FINISHED")
     await client.disconnect()
 
 asyncio.run(main())
